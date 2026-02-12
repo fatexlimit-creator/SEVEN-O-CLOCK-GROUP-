@@ -1,3 +1,7 @@
 streamlit
 pdfplumber
 openai
+python-docx
+pytesseract
+pdf2image
+pillow
