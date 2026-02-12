@@ -1,81 +1,125 @@
 import streamlit as st
 import pdfplumber
 from openai import OpenAI
+import docx
+import pytesseract
+from pdf2image import convert_from_bytes
+from PIL import Image
+import io
 
 # ================= 配置区 =================
 st.set_page_config(
-    page_title="7-Trade 智能单证风控 Pro",
-    page_icon="⚖️",
+    page_title="7-Trade 智能单证风控 Pro (OCR版)",
+    page_icon="👁️",
     layout="wide"
 )
 
-# ================= 核心逻辑区 =================
+# ================= 核心工具区 =================
 
-def extract_text_from_files(uploaded_files):
-    """从多个PDF提取文字，并合并"""
+def read_docx(file):
+    """读取 Word 文档 (.docx)"""
+    try:
+        doc = docx.Document(file)
+        text = "\n".join([para.text for para in doc.paragraphs])
+        return text
+    except Exception as e:
+        return f"Word 读取失败: {e} (请确保是 .docx 格式，不是老版 .doc)"
+
+def read_pdf_with_ocr(file):
+    """读取 PDF (包含扫描件 OCR)"""
+    text = ""
+    # 1. 尝试直接提取文本 (针对电子版 PDF)
+    try:
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                extracted = page.extract_text()
+                if extracted:
+                    text += extracted + "\n"
+    except:
+        pass
+
+    # 2. 如果提取的字数太少（<50字），说明可能是扫描件，启动 OCR
+    if len(text) < 50:
+        file.seek(0) # 重置指针
+        try:
+            # 将 PDF 每一页转为图片
+            images = convert_from_bytes(file.read())
+            ocr_text = ""
+            for i, image in enumerate(images):
+                # 调用 OCR 引擎识别图片中的文字
+                page_content = pytesseract.image_to_string(image, lang='eng') # 默认识别英文
+                ocr_text += f"\n--- 第 {i+1} 页 (OCR识别) ---\n{page_content}\n"
+            
+            # 如果 OCR 识别出了内容，就用 OCR 的结果
+            if len(ocr_text) > len(text):
+                text = ocr_text
+        except Exception as e:
+            return f"OCR 识别失败: {e} (请检查 packages.txt 是否配置正确)"
+            
+    return text
+
+def extract_text_smart(uploaded_files):
+    """智能识别文件类型并提取文字"""
     combined_text = ""
     if not uploaded_files:
         return "（未上传）"
     
-    # 如果是单个文件，转为列表处理
     if not isinstance(uploaded_files, list):
         uploaded_files = [uploaded_files]
 
     for file in uploaded_files:
+        file_name = file.name.lower()
+        content = ""
+        
         try:
-            with pdfplumber.open(file) as pdf:
-                file_content = ""
-                for page in pdf.pages:
-                    file_content += page.extract_text() + "\n"
-                combined_text += f"\n--- 文件名: {file.name} ---\n{file_content}\n"
+            if file_name.endswith(".docx"):
+                content = read_docx(file)
+            elif file_name.endswith(".pdf"):
+                content = read_pdf_with_ocr(file)
+            else:
+                content = "不支持的文件格式 (仅支持 PDF 或 DOCX)"
+                
+            combined_text += f"\n=== 文件: {file.name} ===\n{content}\n"
         except Exception as e:
-            return f"读取错误 {file.name}: {e}"
+            combined_text += f"\n读取错误 {file.name}: {e}\n"
+            
     return combined_text
 
 def analyze_cross_check(po_text, requirement_text, docs_text, mode, api_key):
-    """调用 DeepSeek 进行交叉比对"""
-    
+    """DeepSeek 交叉比对"""
     clean_key = api_key.strip()
     client = OpenAI(api_key=clean_key, base_url="https://api.deepseek.com")
 
-    # 根据不同模式，定制不同的 Prompt
     if mode == "信用证 (L/C)":
-        check_focus = "重点比对：1.【单据】是否完全符合【信用证】的所有条款（特别是46A/47A条款）。2.【单据】金额和数量是否在【合同】允许范围内。"
+        check_focus = "重点比对：1.【单据】是否完全符合【信用证】扫描件的所有条款。2. 扫描件可能存在识别误差，请结合上下文判断。"
     elif mode == "托收 (CAD/DP)":
-        check_focus = "重点比对：1.【单据】是否符合【银行托收指示】的要求。2. 提单收货人（Consignee）是否按指示填写（防止无单放货）。"
-    else: # TT
-        check_focus = "重点比对：【单据】内容（品名、金额、收货人）是否与【销售合同】完全一致。"
+        check_focus = "重点比对：【单据】是否符合【银行托收指示】的要求。"
+    else: 
+        check_focus = "重点比对：【单据】与【销售合同】的一致性。"
 
     system_prompt = f"""
-    你亦是 Seven O'Clock Resources 的首席单证专家。现在的任务是进行【多方单据交叉审核】。
+    你是 Seven O'Clock Resources 的单证风控专家。
+    当前任务：{mode} 模式下的多方单据交叉审核。
     
-    当前业务模式：{mode}
-    {check_focus}
+    注意：部分内容可能来自 OCR 识别（扫描件），可能会有乱码或拼写错误（如 '0' 被识别为 'O'），请利用上下文智能纠错并理解。
     
-    请严格检查以下三个维度的逻辑一致性：
-    1. **销售合同 (PO)**：这是我们就答应给客户的东西。
-    2. **要求文件 (L/C 或 托收指示)**：这是客户或银行要求我们必须怎么做。
-    3. **出口单据 (Docs)**：这是单证员实际做出来的文件（发票、箱单、提单等）。
+    请严格检查逻辑一致性：
+    1. **销售合同 (PO)**
+    2. **要求文件 (L/C 或 托收指示)**
+    3. **出口单据 (Docs)**
     
-    请找出“单证不符”、“单单不符”的错误，例如：
-    - 信用证要求 Latest Shipment 是 15号，但提单是 20号。
-    - 合同是 CIF 条款，但发票上没写保险费。
-    - 毛重在箱单上是 1000kg，提单上却是 1005kg。
-    
-    输出格式：
-    🚨 **致命错误** (影响收款的硬伤)
-    ⚠️ **一般疑点** (可能是笔误)
-    ✅ **一致性确认** (主要信息核对无误)
+    请找出“单证不符”、“单单不符”的错误。
+    输出格式：🚨 **致命错误**、⚠️ **一般疑点**、✅ **一致性确认**。
     """
 
     user_prompt = f"""
-    【1. 我们的销售合同 PO】:
-    {po_text[:5000]}
+    【1. 销售合同 PO】:
+    {po_text[:6000]}
     
-    【2. 客户/银行要求 (L/C 或 指示)】:
-    {requirement_text[:5000]}
+    【2. 客户/银行要求】:
+    {requirement_text[:6000]}
     
-    【3. 我们做的出口单据 (发票/箱单/提单)】:
+    【3. 出口单据】:
     {docs_text[:8000]}
     """
 
@@ -97,60 +141,52 @@ def analyze_cross_check(po_text, requirement_text, docs_text, mode, api_key):
 
 with st.sidebar:
     st.title("Seven O'Clock")
-    st.markdown("## ⚙️ 设置")
+    st.markdown("### ⚙️ 核心设置")
     api_key_input = st.text_input("DeepSeek API Key", type="password")
     
     st.markdown("---")
-    st.markdown("### 🛠️ 业务模式选择")
-    mode = st.radio(
-        "请选择本次交易方式：",
-        ("信用证 (L/C)", "电汇 (T/T)", "托收 (CAD/DP)")
-    )
+    st.markdown("### 🛠️ 业务模式")
+    mode = st.radio("选择交易方式：", ("信用证 (L/C)", "电汇 (T/T)", "托收 (CAD/DP)"))
+    st.info("💡 已支持：\n- Word 合同 (.docx)\n- 扫描件 PDF (自动OCR)")
 
-st.title(f"🛡️ 智能单证风控 Pro - {mode} 模式")
-st.info("💡 请分别上传对应的文件，AI 将自动进行【三单匹配】找茬。")
+st.title(f"🛡️ 智能单证风控 Pro (OCR增强版)")
 
-# 根据选择的模式，显示不同的上传框
 col1, col2, col3 = st.columns(3)
 
 with col1:
     st.subheader("1️⃣ 销售合同 (PO)")
-    file_po = st.file_uploader("上传发给客户的合同", type="pdf", key="po")
+    # 增加 docx 支持
+    file_po = st.file_uploader("上传合同 (PDF/Word)", type=["pdf", "docx"], key="po")
 
 with col2:
     if mode == "电汇 (T/T)":
         st.subheader("🚫 (T/T 无需此项)")
         file_req = None
-        st.caption("电汇模式主要比对合同和单据。")
     else:
-        title = "2️⃣ 信用证 (L/C)" if mode == "信用证 (L/C)" else "2️⃣ 托收指示/银行信息"
+        title = "2️⃣ 信用证 (L/C)" if mode == "信用证 (L/C)" else "2️⃣ 托收指示"
         st.subheader(title)
-        file_req = st.file_uploader("上传客户/银行发来的要求", type="pdf", key="req")
+        # 增加 docx 支持 (虽然LC一般是PDF)
+        file_req = st.file_uploader("上传扫描件/要求", type=["pdf", "docx"], key="req")
 
 with col3:
     st.subheader("3️⃣ 出口全套单据")
-    # accept_multiple_files=True 允许一次把发票、箱单、提单全拖进去
-    files_docs = st.file_uploader("上传做好的发票/箱单/提单", type="pdf", accept_multiple_files=True, key="docs")
+    files_docs = st.file_uploader("上传单据", type=["pdf", "docx"], accept_multiple_files=True, key="docs")
 
-# 开始按钮
 st.markdown("---")
-if st.button("🚀 开始 AI 交叉稽核", type="primary"):
+if st.button("🚀 开始 AI 交叉稽核 (含OCR)", type="primary"):
     if not api_key_input:
-        st.error("请先在左侧输入 API Key")
+        st.error("请先输入 API Key")
     elif not file_po:
         st.error("请至少上传销售合同！")
     elif not files_docs:
         st.error("请上传出口单据！")
     else:
-        with st.spinner("AI 正在同时阅读多份文件，进行逻辑碰撞..."):
-            # 1. 提取文字
-            text_po = extract_text_from_files(file_po)
-            text_req = extract_text_from_files(file_req) if file_req else "（无额外要求，以合同为准）"
-            text_docs = extract_text_from_files(files_docs)
+        with st.spinner("正在启动 OCR 引擎识别扫描件，并进行交叉比对... (扫描件处理较慢，请稍候)"):
+            text_po = extract_text_smart(file_po)
+            text_req = extract_text_smart(file_req) if file_req else "（无要求）"
+            text_docs = extract_text_smart(files_docs)
             
-            # 2. 发送给 AI
             result = analyze_cross_check(text_po, text_req, text_docs, mode, api_key_input)
             
-            # 3. 显示结果
             st.success("审核完成！")
             st.markdown(result)
