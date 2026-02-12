@@ -25,49 +25,46 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 def analyze_with_ai(doc_text, doc_type, api_key):
-    """调用 AI 进行风控审查"""
+    """调用 AI 进行风控审查 (DeepSeek 专用版)"""
     
-    # 这里我们配置 DeepSeek 的地址（或者 OpenAI）
-    # 如果是用 DeepSeek，base_url 必须填对
+    # 1. 强制清洗 Key：去掉前后可能复制进去的空格
+    clean_key = api_key.strip()
+    
+    # 2. 强制指定 DeepSeek 的地址 (绝对不能错)
     client = OpenAI(
-        api_key=api_key, 
-        base_url="https://api.deepseek.com"  # 如果用 OpenAI，把这行删掉即可
+        api_key=clean_key, 
+        base_url="https://api.deepseek.com" 
     )
 
     # 核心指令：扮演老练的单证专家
     system_prompt = """
-    你是一位拥有20年经验的国际贸易单证专家，服务于 'Seven O'Clock Resources' 公司（主营涤纶纱线库存贸易）。
-    你的任务是审查用户上传的贸易单据（如信用证 LC、合同 PO、提单 BL）。
+    你是一位拥有20年经验的国际贸易单证专家，服务于 'Seven O'Clock Resources'。
+    请审查用户上传的贸易单据。
     
     请执行以下风控检查：
-    1. **软条款陷阱**：查找是否有 'Receipt of Goods'、'Quality Certificate by Applicant' 等导致货到付款或客户控制放货的条款。
-    2. **关键数据核对**：检查金额、最迟装运期 (Latest Shipment)、溢短装条款 (Tolerance)。
-    3. **特殊风险**：如果是孟加拉信用证，特别注意是否有奇怪的扣费条款或中转行限制。
-    4. **一致性检查**：如果是多份文件，检查单单是否一致（如毛重、净重）。
+    1. **软条款陷阱**：查找是否有 'Receipt of Goods'、'Quality Certificate by Applicant' 等条款。
+    2. **关键数据核对**：检查金额、最迟装运期、溢短装条款。
+    3. **特殊风险**：孟加拉信用证的特殊扣费或中转行限制。
+    4. **一致性检查**：检查单单一致。
     
-    输出格式要求：
-    - 使用 Markdown 格式。
-    - 第一部分：🚨 **高危风险预警** (用红色加粗显示致命问题)。
-    - 第二部分：⚠️ **需注意的细节** (如费用承担、特殊单据要求)。
-    - 第三部分：✅ **操作建议** (如：建议修改条款、建议投保中信保)。
-    - 语气要专业、犀利、直接。
+    输出格式要求：使用 Markdown，包含【高危风险预警】、【需注意细节】、【操作建议】。
     """
 
-    user_prompt = f"请审查以下 {doc_type} 文件的内容：\n\n{doc_text[:10000]}" # 截取前10000字防止超长
+    user_prompt = f"请审查以下 {doc_type} 文件的内容：\n\n{doc_text[:10000]}"
 
     try:
         response = client.chat.completions.create(
-            model="deepseek-chat", # 如果用 OpenAI 改为 "gpt-4o"
+            model="deepseek-chat",  # 强制指定 DeepSeek 模型名
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.1, # 保持冷静，不要胡编乱造
+            temperature=0.1,
             stream=False
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"AI 连接失败: {e} (请检查 API Key 是否正确)"
+        return f"❌ AI 连接失败: {e}\n\n请检查：\n1. DeepSeek 官网是否有余额？\n2. Key 是否复制完整？" f"AI 连接失败: {e} (请检查 API Key 是否正确)"
 
 # ================= 界面 UI 区 =================
 
@@ -125,3 +122,4 @@ with col2:
 # 底部版权
 st.markdown("---")
 st.caption("© 2026 Seven O'Clock Resources | Internal Use Only | Powered by 7-Trade OS")
+
