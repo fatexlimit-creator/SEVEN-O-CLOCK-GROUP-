@@ -22,7 +22,7 @@ st.set_page_config(
 if 'audit_session_id' not in st.session_state:
     st.session_state.audit_session_id = 0
 
-# 2. 存储审核记录（老板看板数据）
+# 2. 存储审核记录（管理员数据）
 if 'audit_history' not in st.session_state:
     st.session_state.audit_history = []
 
@@ -118,7 +118,6 @@ def create_archive_zip(contract_no, files_map):
         for original_file, file_type in files_map:
             if original_file:
                 # 重命名逻辑：合同号_文件类型_已审核.后缀
-                # 例如：PO2026_合同_已审核.pdf
                 ext = original_file.name.split('.')[-1]
                 new_name = f"{contract_no}_{file_type}_已审核.{ext}"
                 original_file.seek(0)
@@ -145,14 +144,14 @@ with st.sidebar:
         st.session_state.audit_session_id += 1
         st.rerun()
 
-# 主界面：使用 Tabs 分页
-tab1, tab2 = st.tabs(["🕵️‍♀️ 业务员·审核台", "👨‍💼 老板·管理看板"])
+# 主界面：Tabs 分页（这里修改了名字）
+tab1, tab2 = st.tabs(["🕵️‍♀️ 单证·审核台", "👨‍💼 管理员·数据台"])
 
-# === Tab 1: 业务员审核区 ===
+# === Tab 1: 单证·审核台 ===
 with tab1:
     st.caption(f"当前批次: #{st.session_state.audit_session_id}")
     
-    # 1. 强制录入合同号 (归档的核心)
+    # 1. 强制录入合同号
     col_input, col_info = st.columns([1, 2])
     with col_input:
         contract_no = st.text_input("📝 合同号 (必填)", placeholder="例如: PO-20260212")
@@ -193,8 +192,7 @@ with tab1:
                 # AI 分析
                 result = analyze_cross_check(t_po, t_req, t_docs, mode, api_key)
                 
-                # 记录到历史 (老板看板)
-                # 简单判断一下 AI 说的分数或风险
+                # 记录到历史
                 risk_tag = "🔴 高危" if "致命" in result else "🟢 安全"
                 
                 st.session_state.audit_history.append({
@@ -209,7 +207,6 @@ with tab1:
                 st.markdown(result)
                 
                 # 生成归档包
-                # 准备文件列表：(文件对象, "类型")
                 files_to_zip = [(f_po, "合同")]
                 if f_req: files_to_zip.append((f_req, "要求"))
                 if f_docs:
@@ -217,26 +214,23 @@ with tab1:
                 
                 zip_data = create_archive_zip(contract_no, files_to_zip)
                 
-                # 下载按钮
                 st.download_button(
                     label=f"📥 下载归档包 ({contract_no}_已审核.zip)",
                     data=zip_data,
                     file_name=f"{contract_no}_已审核.zip",
                     mime="application/zip",
-                    help="点击下载后，文件会自动重命名并打包，请保存到公司网盘。"
+                    help="文件会自动重命名并打包。"
                 )
 
-# === Tab 2: 老板看板区 ===
+# === Tab 2: 管理员·数据台 ===
 with tab2:
     st.subheader("📊 今日审核记录 (实时)")
     st.caption("注意：刷新网页后记录会清空，请及时查看。")
     
     if st.session_state.audit_history:
-        # 把列表转为表格展示
         df = pd.DataFrame(st.session_state.audit_history)
         st.dataframe(df, use_container_width=True)
         
-        # 统计数据
         total = len(df)
         high_risk = len(df[df['结果摘要'] == "🔴 高危"])
         st.metric("今日审核总数", f"{total} 单", delta=f"{high_risk} 单高危风险", delta_color="inverse")
