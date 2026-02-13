@@ -8,8 +8,8 @@ from PIL import Image
 import io
 import time
 import pandas as pd
-import zipfile
 import base64
+from datetime import datetime
 
 # ================= 配置区 =================
 st.set_page_config(
@@ -18,7 +18,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# === 视觉优化：注入专业的行业背景图 ===
+# === 视觉优化：行业背景 ===
 page_bg_img = """
 <style>
 [data-testid="stAppViewContainer"] {
@@ -54,7 +54,7 @@ header[data-testid="stHeader"] {
 """
 st.markdown(page_bg_img, unsafe_allow_html=True)
 
-# === 嵌入公司 LOGO (Base64编码) ===
+# === 嵌入公司 LOGO ===
 LOGO_BASE64 = "data:image/png;base64,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"
 
 with st.sidebar:
@@ -161,29 +161,19 @@ def analyze_cross_check(po_text, req_text, docs_text, mode, api_key):
         return response.choices[0].message.content
     except Exception as e: return f"AI 连接失败: {e}"
 
-def create_archive_zip(contract_no, files_map):
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for original_file, file_type in files_map:
-            if original_file:
-                ext = original_file.name.split('.')[-1]
-                new_name = f"{contract_no}_{file_type}_已审核.{ext}"
-                original_file.seek(0)
-                zf.writestr(new_name, original_file.read())
-    return zip_buffer.getvalue()
-
 # ================= 主界面 =================
 tab1, tab2 = st.tabs(["🕵️‍♀️ 单证·审核台", "👨‍💼 管理员·数据台"])
 
+# === Tab 1: 单证·审核台 (无Zip版) ===
 with tab1:
     with st.container():
         st.caption(f"当前批次: #{st.session_state.audit_session_id}")
         col_input, col_info = st.columns([1, 2])
         with col_input:
-            contract_no = st.text_input("📝 合同号 (必填)", placeholder="例如: PO-20260212")
+            contract_no = st.text_input("📝 合同号 (用于记录台账)", placeholder="例如: PO-20260212")
         with col_info:
-            if contract_no: st.success(f"归档命名预览：**{contract_no}_..._已审核.zip**")
-            else: st.warning("👈 请输入合同号以启动 AI 审核引擎。")
+            if contract_no: st.success(f"当前记录将保存为: {contract_no}")
+            else: st.warning("👈 请输入合同号，否则无法开始。")
 
         s_key = str(st.session_state.audit_session_id)
         c1, c2, c3 = st.columns(3)
@@ -202,47 +192,65 @@ with tab1:
         st.markdown("---")
         if st.button("🚀 启动 AI 交叉风控引擎", type="secondary"):
             if not api_key: st.error("请在左侧侧边栏输入 DeepSeek API Key")
-            elif not contract_no: st.error("❌ 无法归档：请填写合同号")
-            elif not f_po or not f_docs: st.error("文件不全：请至少上传销售合同和出口单据")
+            elif not contract_no: st.error("请填写合同号以便计入台账")
+            elif not f_po or not f_docs: st.error("文件不全")
             else:
                 with st.spinner("AI 引擎正在读取文件、识别扫描件并进行逻辑碰撞..."):
                     t_po = extract_text_smart(f_po)
                     t_req = extract_text_smart(f_req) if f_req else "无要求"
                     t_docs = extract_text_smart(f_docs)
+                    
                     result = analyze_cross_check(t_po, t_req, t_docs, mode, api_key)
                     risk_tag = "🔴 高危" if "致命" in result else "🟢 安全"
+                    
+                    # 记录到内存台账
                     st.session_state.audit_history.append({
-                        "时间": time.strftime("%H:%M:%S"),
+                        "日期": datetime.now().strftime("%Y-%m-%d"),
+                        "时间": datetime.now().strftime("%H:%M:%S"),
                         "合同号": contract_no,
                         "模式": mode,
-                        "结果摘要": risk_tag
+                        "风险评级": risk_tag,
+                        "AI审核摘要": result[:100].replace("\n", " ") + "..." # 截取前100字作为摘要
                     })
+                    
                     st.success(f"✅ 合同 {contract_no} 风控扫描完成！")
                     with st.expander("📄 点击查看详细风控报告", expanded=True):
                         st.markdown(result)
-                    files_to_zip = [(f_po, "合同")]
-                    if f_req: files_to_zip.append((f_req, "要求"))
-                    if f_docs:
-                        for doc in f_docs: files_to_zip.append((doc, "单据"))
-                    zip_data = create_archive_zip(contract_no, files_to_zip)
-                    st.download_button(
-                        label=f"📥 下载归档包 ({contract_no}_已审核.zip)",
-                        data=zip_data,
-                        file_name=f"{contract_no}_已审核.zip",
-                        mime="application/zip"
-                    )
+                    
+                    # 删除了 Zip 下载代码，因为您说坚果云已有存档
 
+# === Tab 2: 管理员·数据台 (Excel导出版) ===
 with tab2:
     with st.container():
-        st.subheader("📊 今日风控数据看板 (实时)")
+        st.subheader("📊 今日风控数据看板 (请务必在下班前下载)")
+        
         if st.session_state.audit_history:
             df = pd.DataFrame(st.session_state.audit_history)
+            
+            # 显示表格
             def highlight_risk(val):
                 color = '#ff4b4b' if val == '🔴 高危' else '#09ab3b'
                 return f'color: {color}; font-weight: bold;'
-            st.dataframe(df.style.map(highlight_risk, subset=['结果摘要']), use_container_width=True)
+            st.dataframe(df.style.map(highlight_risk, subset=['风险评级']), use_container_width=True)
+            
+            # 统计
             total = len(df)
-            high_risk = len(df[df['结果摘要'] == "🔴 高危"])
-            st.metric("今日审核总量", f"{total} 单", delta=f"{high_risk} 单存在高危风险", delta_color="inverse")
+            high_risk = len(df[df['风险评级'] == "🔴 高危"])
+            st.metric("今日审核总量", f"{total} 单", delta=f"{high_risk} 单高危风险", delta_color="inverse")
+            
+            st.markdown("---")
+            # 导出 CSV 按钮 (兼容 Excel)
+            # 文件名自动生成：2026-02-14_审核台账.csv
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            csv_data = df.to_csv(index=False).encode('utf-8-sig') # utf-8-sig 确保 Excel 打开不乱码
+            
+            st.download_button(
+                label="📥 下载今日审核台账 (Excel/CSV)",
+                data=csv_data,
+                file_name=f"{today_str}_审核台账.csv",
+                mime="text/csv",
+                help="请下载此文件并保存至坚果云，作为今日的永久记录。"
+            )
+            
         else:
-            st.info("📭 今日暂无审核记录，请前往「单证·审核台」开始工作。")
+            st.info("📭 今日暂无数据。因为云服务器会每日重置，请养成【每日下班前下载台账】的习惯。")
